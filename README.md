@@ -2,7 +2,7 @@
 
 > 用 100% 的你去匹配整个世界
 
-**内外长记忆推理推荐系统** — 一个运行在 [OpenClaw](https://github.com/nicepkg/openclaw) 上的个人信息推荐插件。
+**Inner-Outer Memory Reasoning Recommender** (内外长记忆推理推荐系统) — 一个运行在 [OpenClaw](https://github.com/nicepkg/openclaw) 上的个人信息推荐插件。
 
 你的 AI 分身不只记得你说过什么（**Inner Memory**），还能看到外面发生了什么（**Outer Knowledge**），然后在对话中主动把对你有价值的信息推荐给你。
 
