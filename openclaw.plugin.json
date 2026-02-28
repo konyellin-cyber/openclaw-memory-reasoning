@@ -1,0 +1,31 @@
+{
+  "id": "personal-rec",
+  "name": "Personal Recommendation",
+  "description": "LLM-powered personal feed recommendation — searches recent arXiv papers during conversations when relevant.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "feeds": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["https://rss.arxiv.org/rss/cs.IR"]
+      },
+      "fetchIntervalHours": {
+        "type": "number",
+        "default": 6
+      }
+    }
+  },
+  "uiHints": {
+    "feeds": {
+      "label": "RSS Feed URLs",
+      "help": "List of RSS feed URLs to fetch. Default: arXiv cs.IR"
+    },
+    "fetchIntervalHours": {
+      "label": "Fetch Interval (hours)",
+      "help": "How often to fetch new feed data. Default: 6 hours"
+    }
+  }
+}
