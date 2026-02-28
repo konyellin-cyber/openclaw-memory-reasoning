@@ -78,25 +78,24 @@
   │  ┌─────────────────────────────────────────┐
   │  │ memory-reasoning 插件                     │
   │  │                                           │
-  │  │ Step A: 读取路由表                         │
-  │  │   加载 route-table.yaml（带缓存，~1ms）    │
+  │  │ Step A: 读取记忆索引                        │
+  │  │   加载 MEMORY.md 索引文件（~2K tokens）     │
+  │  │   包含：目录结构、文件描述、主题说明         │
   │  │                                           │
-  │  │ Step B: 意图分类                           │
-  │  │   用户消息："推荐系统的召回实验效果"         │
-  │  │   ✅ 命中关键词 ["推荐", "召回"]            │
-  │  │   → 路由 "推荐系统/算法"                    │
+  │  │ Step B: 模型推理路由                        │
+  │  │   调用轻量模型（如 haiku / gemini-flash）   │
+  │  │   输入：用户消息 + 记忆索引全文              │
+  │  │   模型理解索引结构后推理：                   │
+  │  │   "用户在问推荐系统召回实验                  │
+  │  │    → 需要 insights/recsys-algorithm.md     │
+  │  │    → 需要 projects/ 下的相关项目文件"        │
+  │  │   输出：JSON 文件列表 + 推理理由             │
   │  │                                           │
-  │  │ Step C: 构建加载计划                       │
-  │  │   路由表指定加载：                          │
-  │  │   - insights/recsys-algorithm.md           │
-  │  │   - projects/ 目录下所有文件                │
-  │  │   Token 预算：5000                         │
+  │  │ Step C: 读取文件（并行，~10ms）             │
+  │  │   读取模型指定的记忆文件                     │
+  │  │   Token 预算控制（上限 8K）                 │
   │  │                                           │
-  │  │ Step D: 读取文件（并行，~10ms）             │
-  │  │   读取 insights/recsys-algorithm.md        │
-  │  │   读取 projects/*.md                       │
-  │  │                                           │
-  │  │ Step E: 返回 prependContext                │
+  │  │ Step D: 返回 prependContext                │
   │  │   拼装精准记忆上下文（~3K tokens）          │
   │  └─────────────────────────────────────────┘
   │
@@ -123,7 +122,7 @@
 | 步骤 | 修改前 | 修改后 |
 |------|--------|--------|
 | ① 初始化 | MEMORY.md 全文灌入（5K-8K tokens） | MEMORY.md 精简为轻量索引（<2K tokens） |
-| ② 记忆路由 | ❌ 不存在 | ✅ 插件在 hook 中执行推理路由（<25ms） |
+| ② 记忆路由 | ❌ 不存在 | ✅ 插件调用轻量模型理解索引，推理出需要加载的文件（~300ms） |
 | ③ 上下文组装 | 全量无差别注入 | 精准领域文件 + prependContext 拼接 |
 | ④ LLM 搜索 | Agent 可能搜可能不搜（不可控） | 核心记忆已预加载，Agent 搜索变为补充而非必须 |
 | ⑤ 回答质量 | 取决于 Agent 自觉性 | 系统级保障，关键记忆必定在上下文中 |
@@ -144,7 +143,7 @@
 
 | | 修改前 | 修改后 |
 |---|---|---|
-| **加载内容** | MEMORY.md 全文（完全浪费） | 无额外加载（路由未命中 → 跳过） |
+| **加载内容** | MEMORY.md 全文（完全浪费） | 模型判断无需记忆 → 不加载（零浪费） |
 | **Token 消耗** | ~8K（浪费） | ~0（节省） |
 | **记忆命中** | N/A | N/A |
 
@@ -152,7 +151,7 @@
 
 | | 修改前 | 修改后 |
 |---|---|---|
-| **加载内容** | MEMORY.md 全文，Agent 可能猜上次聊了什么 | 命中 "继续讨论" 路由 → 加载最近 3 天日志 |
+| **加载内容** | MEMORY.md 全文，Agent 可能猜上次聊了什么 | 模型理解"继续讨论"意图 → 加载最近日志 |
 | **Token 消耗** | ~8K + Agent 可能搜索 | ~4K（最近日志） |
 | **记忆命中** | 不确定，Agent 需要先猜再搜 | 高，日志中包含完整对话摘要 |
 
@@ -160,7 +159,7 @@
 
 | | 修改前 | 修改后 |
 |---|---|---|
-| **加载内容** | MEMORY.md 全文，个人偏好可能被截断 | 命中 "个人信息" 路由 → 加载 `facts/personal.md` |
+| **加载内容** | MEMORY.md 全文，个人偏好可能被截断 | 模型从索引中找到 `facts/personal.md` → 精准加载 |
 | **Token 消耗** | ~8K | ~2K |
 | **记忆命中** | 取决于 MEMORY.md 是否包含、是否被截断 | 100% 命中（`personal.md` 完整加载） |
 
@@ -191,23 +190,23 @@
 **修改后**：
 ```
                     ┌──────────────────┐
-                    │  route-table.yaml │ (路由规则)
+                    │   MEMORY.md 索引  │ (目录结构 + 文件描述)
                     └────────┬─────────┘
-                             │ 解析
+                             │ 作为推理输入
                              ▼
-┌──────────┐      ┌──────────────────────┐
-│ 用户消息  │─────→│ memory-reasoning     │
-└──────────┘      │ 插件 (hook)          │
-                  │                      │
-                  │ 1. 意图分类 (~0ms)    │
-                  │ 2. 路由匹配          │
-                  │ 3. 文件选择          │
-                  └────────┬─────────────┘
-                           │ 精准加载
+┌──────────┐      ┌──────────────────────────┐
+│ 用户消息  │─────→│ memory-reasoning 插件     │
+└──────────┘      │ (before_prompt_build)     │
+                  │                           │
+                  │ 调用轻量模型 (~300ms)      │
+                  │ 输入：用户消息 + 索引全文   │
+                  │ 输出：需要加载的文件列表    │
+                  └────────┬──────────────────┘
+                           │ 按模型推理结果加载
                            ▼
                   ┌──────────────────────┐
                   │ insights/xxx.md      │ (~1K-5K tokens)
-                  │ projects/xxx.md      │ (只加载命中的)
+                  │ projects/xxx.md      │ (模型认为相关的)
                   └────────┬─────────────┘
                            │ prependContext
                            ▼
@@ -250,32 +249,32 @@
 用户消息到达
   │
   ▼
-┌─────────────────────────────────────────────────┐
-│ OpenClaw Core（不修改）                           │
-│                                                   │
-│  session 加载 → messages 准备好                    │
-│       │                                           │
-│       ▼                                           │
-│  ┌─── before_prompt_build Hook ───┐              │
-│  │                                 │              │
-│  │  ┌───────────────────────────┐  │              │
-│  │  │ memory-reasoning 插件     │  │              │
-│  │  │                           │  │              │
-│  │  │ 1. 解析用户意图           │  │              │
-│  │  │ 2. 读取路由表             │  │              │
-│  │  │ 3. 匹配记忆文件           │  │              │
-│  │  │ 4. 读取文件内容           │  │              │
-│  │  │ 5. 返回 prependContext    │  │              │
-│  │  └───────────────────────────┘  │              │
-│  │                                 │              │
-│  └─────────────────────────────────┘              │
-│       │                                           │
-│       ▼                                           │
-│  system prompt 组装（含注入的记忆上下文）           │
-│       │                                           │
-│       ▼                                           │
-│  LLM 调用                                        │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ OpenClaw Core（不修改）                                │
+│                                                        │
+│  session 加载 → messages 准备好                         │
+│       │                                                │
+│       ▼                                                │
+│  ┌─── before_prompt_build Hook ───┐                   │
+│  │                                 │                   │
+│  │  ┌───────────────────────────┐  │                   │
+│  │  │ memory-reasoning 插件     │  │                   │
+│  │  │                           │  │                   │
+│  │  │ 1. 读取 MEMORY.md 索引   │  │                   │
+│  │  │ 2. 调用轻量模型推理       │  │                   │
+│  │  │    "用户消息+索引→文件列表"│  │                   │
+│  │  │ 3. 读取推理结果指定的文件  │  │                   │
+│  │  │ 4. 返回 prependContext    │  │                   │
+│  │  └───────────────────────────┘  │                   │
+│  │                                 │                   │
+│  └─────────────────────────────────┘                   │
+│       │                                                │
+│       ▼                                                │
+│  system prompt 组装（含注入的记忆上下文）                 │
+│       │                                                │
+│       ▼                                                │
+│  LLM 调用（主模型）                                     │
+└──────────────────────────────────────────────────────┘
 ```
 
 ### 插件内部架构
@@ -284,10 +283,10 @@
 memory-reasoning-plugin/
 ├── src/
 │   ├── index.ts                  # 插件入口，注册 hook
-│   ├── router/
-│   │   ├── intent-classifier.ts  # 意图分类器
-│   │   ├── route-table.ts        # 路由表解析器
-│   │   └── file-selector.ts      # 文件选择策略
+│   ├── reasoning/
+│   │   ├── memory-router.ts      # 核心：调用轻量模型做路由推理
+│   │   ├── index-loader.ts       # MEMORY.md 索引加载 + 缓存
+│   │   └── prompt-template.ts    # 推理 prompt 模板
 │   ├── loader/
 │   │   ├── memory-reader.ts      # 记忆文件读取
 │   │   └── context-builder.ts    # 上下文拼装 + 预算控制
@@ -295,7 +294,6 @@ memory-reasoning-plugin/
 │   │   └── types.ts              # 配置类型
 │   └── utils/
 │       └── logger.ts             # 调试日志
-├── route-table.yaml              # 默认路由表（可被 workspace 覆盖）
 ├── package.json
 └── tsconfig.json
 ```
@@ -304,242 +302,211 @@ memory-reasoning-plugin/
 
 ## 核心模块设计
 
-### 1. 路由表（Route Table）
+### 1. 记忆索引（Memory Index）
 
-将 MEMORY.md 中的 Markdown 映射表转为结构化配置，插件直接解析执行。
+不再维护独立的路由表（`route-table.yaml`），而是**直接复用 MEMORY.md 作为模型的推理输入**。MEMORY.md 本身就是用户精心设计的索引文件，包含目录结构、文件说明、主题分类——这些信息对模型来说完全可以理解。
 
-**格式设计（YAML）**：
+**MEMORY.md 的角色转变**：
 
-```yaml
-# route-table.yaml — 可放在 workspace/ 下由用户自定义
+| | 修改前 | 修改后 |
+|---|---|---|
+| **给谁看** | 全文灌入 system prompt，希望 Agent 自己看懂 | 作为推理模型的输入，由插件系统级调用 |
+| **执行方式** | 被动文本，Agent 可能忽略 | 主动输入，模型必须基于它做出路由决策 |
+| **维护方式** | 不变 | 不变（用户照常维护，不需要学新格式） |
 
-version: 1
+**优势**：用户不需要维护两套配置（MEMORY.md + route-table.yaml），索引文件就是路由表，路由表就是索引文件。
 
-# 默认行为：不匹配任何路由时加载什么
-defaults:
-  files: []                    # 不加载额外记忆
-  max_tokens: 2000             # 默认 token 预算
+**MEMORY.md 示例结构**（索引部分，供推理模型阅读）：
 
-# 路由规则：按顺序匹配，首个命中的生效（支持多个命中）
-routes:
-  - name: "推荐系统/算法"
-    match:
-      keywords: ["推荐", "召回", "排序", "模型", "CTR", "CVR", "embedding", "特征"]
-      patterns: ["算[法子]", "实验.*效果", "AB.*test"]
-    load:
-      - insights/recsys-algorithm.md
-      - projects/                          # 目录 → 加载目录下所有文件
-    max_tokens: 5000
+```markdown
+## 记忆目录结构
 
-  - name: "商业/产品"
-    match:
-      keywords: ["产品", "商业", "ROI", "变现", "用户增长", "DAU"]
-    load:
-      - insights/business-product.md
-    max_tokens: 3000
-
-  - name: "组织管理"
-    match:
-      keywords: ["团队", "管理", "协作", "OKR", "周报", "汇报"]
-    load:
-      - insights/management-org.md
-    max_tokens: 3000
-
-  - name: "创作/AI工具"
-    match:
-      keywords: ["创作", "AI", "工具", "分身", "头像", "生成"]
-    load:
-      - insights/creation-tools.md
-    max_tokens: 3000
-
-  - name: "个人信息"
-    match:
-      keywords: ["我的", "个人", "兴趣", "偏好", "喜欢"]
-    load:
-      - facts/personal.md
-    max_tokens: 2000
-
-  - name: "工作信息"
-    match:
-      keywords: ["工作", "职位", "部门", "公司", "同事"]
-    load:
-      - facts/work.md
-    max_tokens: 2000
-
-  - name: "继续讨论/上次"
-    match:
-      keywords: ["上次", "继续", "刚才", "之前聊的"]
-      patterns: ["昨天.*说"]
-    load:
-      - "$recent_logs:3"                   # 特殊语法：最近 3 天日志
-    max_tokens: 4000
-
-  - name: "待办/决策"
-    match:
-      keywords: ["待办", "TODO", "todo", "决策", "决定"]
-    load:
-      - todo.md
-      - decisions.md
-    max_tokens: 2000
-
-# 全局配置
-global:
-  total_max_tokens: 8000                   # 所有路由加起来的上限
-  memory_base_path: "memory/"              # 相对 workspace 的记忆目录
-  always_load: []                          # 每次都加载的文件（留空）
-  enable_reasoning_log: true               # 是否在 prependContext 中附带路由推理日志
+memory/
+├── insights/                    # 洞察与方法论
+│   ├── recsys-algorithm.md      # 推荐系统、召回、排序、模型、特征工程
+│   ├── business-product.md      # 商业变现、产品策略、用户增长
+│   ├── management-org.md        # 团队管理、组织协作、OKR
+│   └── creation-tools.md        # 创作工具、AI 应用、数字分身
+├── projects/                    # 项目追踪（每项目独立文件）
+│   ├── <project-A>.md
+│   └── <project-B>.md
+├── facts/                       # 事实信息
+│   ├── personal.md              # 个人兴趣、偏好、生活方式
+│   ├── work.md                  # 职场信息、部门、同事
+│   └── family.md                # 家庭信息
+├── YYYY-MM-DD.md                # 每日日志
+├── decisions.md                 # 决策记录
+├── conversations.md             # 讨论记录
+└── todo.md                      # 待办事项
 ```
 
-**设计要点**：
-- **关键词匹配**（`keywords`）：简单字符串包含，零延迟
-- **正则匹配**（`patterns`）：支持更灵活的模式
-- **多路由叠加**：一条消息可以命中多个路由，文件去重后合并加载
-- **Token 预算**：每个路由有独立 `max_tokens`，全局有 `total_max_tokens` 上限
-- **特殊语法**：`$recent_logs:N` 自动解析为最近 N 天的日志文件
+模型读到这个索引后，就能理解"推荐系统"相关的内容在 `insights/recsys-algorithm.md`，"个人偏好"在 `facts/personal.md`——不需要关键词硬编码。
 
-### 2. 意图分类器（Intent Classifier）
+### 2. 推理路由器（Reasoning Router）— 核心模块
 
-分两级策略，兼顾速度和准确度：
+用轻量模型阅读记忆索引，理解用户意图后输出文件加载决策。
+
+**设计理念**：把"Agent 应该搜索记忆"这件事，从"靠 prompt 指令提示 Agent 自觉执行"变为"由独立的推理模型在代码层面强制执行"。
+
+**推理 Prompt 模板**：
 
 ```
-用户消息
-  │
-  ▼
-Level 1: 规则匹配（~0ms）
-  │ - 关键词匹配
-  │ - 正则匹配
-  │ - 对话历史分析（最近 3 轮的话题延续）
-  │
-  ├─ 匹配到 → 直接返回路由结果
-  │
-  └─ 未匹配 → Level 2
-        │
-        ▼
-      Level 2: 轻量 LLM 推理（可选，~200ms）
-        │ - 用小模型（如 haiku）做一次分类
-        │ - 输入：用户消息 + 路由表名称列表
-        │ - 输出：匹配的路由名称
-        │
-        ├─ 匹配到 → 返回路由结果
-        └─ 未匹配 → 不加载额外记忆
+You are a memory routing assistant. Your job is to decide which memory files 
+should be loaded to help answer the user's message.
+
+## Memory Index
+{MEMORY.md 索引内容}
+
+## Current Context
+- User message: "{用户消息}"
+- Recent conversation topics: {最近 3 轮对话的摘要，可选}
+
+## Task
+Based on the memory index above and the user's message:
+1. Determine if any memory files are relevant to this conversation
+2. If yes, list the specific file paths that should be loaded
+3. If no memory is needed (e.g., general chat, simple questions), return empty
+
+## Response Format (JSON only)
+{
+  "needs_memory": true/false,
+  "files": ["memory/insights/recsys-algorithm.md", "memory/projects/xxx.md"],
+  "reasoning": "一句话说明为什么选这些文件"
+}
 ```
 
-**Level 1 实现细节**：
+**模型调用方式：复用 OpenClaw 内部 `runEmbeddedPiAgent`**
+
+本插件不自行管理 API Key 或 SDK，而是直接复用 OpenClaw 官方的 `llm-task` 扩展所使用的 `runEmbeddedPiAgent()` 内部调用机制。这是 OpenClaw 内置的"从插件中调 LLM"标准模式，具备以下能力：
+
+- **三级回退**：插件配置 → 全局默认模型 → 硬编码 fallback
+- **复用认证**：自动读取 `api.config` 中已配置的 provider（apiKey、baseUrl），无需插件独立管理
+- **协议统一**：所有 provider（智谱、Kimi、阿里等）都走 OpenAI-兼容的 `openai-completions` 协议
+- **配置透传**：通过 `api.config` 传入完整配置，`runEmbeddedPiAgent` 内部自动解析 provider 和认证信息
+
+**参考实现**：OpenClaw 的 `llm-task` bundled extension（`extensions/llm-task/src/llm-task-tool.ts`）使用了完全相同的模式。
+
+**模型选择策略**：
+
+| 模型 | 延迟 | 成本 | 推理质量 | 推荐场景 |
+|------|------|------|---------|---------|
+| claude-3-haiku | ~300ms | 极低 | 足够 | **默认推荐** |
+| gemini-2.0-flash | ~200ms | 极低 | 足够 | 备选 |
+| gpt-4o-mini | ~400ms | 低 | 好 | 复杂索引 |
+| 用户当前主模型（回退） | 视模型而定 | 视模型而定 | 好 | 未配置推理模型时的 fallback |
+
+**关键设计决策**：
+
+1. **推理模型与主对话模型独立** — 推理模型只做"读索引 → 选文件"这一件事，不参与实际对话。即使主模型是 Claude Opus，推理路由也只需要 Haiku 级别。
+
+2. **零额外认证配置** — 通过 `api.config.agents.defaults.model.primary` 获取默认 provider/model，或在 `pluginConfig` 中指定 `routingProvider`/`routingModel` 覆盖。所有认证信息从 OpenClaw 全局配置中自动获取。
+
+3. **索引缓存** — MEMORY.md 的内容在首次读取后缓存，通过 mtime 检测变更。推理模型每次都会被调用（因为用户消息不同），但索引输入是缓存的。
+
+4. **Structured Output** — 要求模型返回 JSON 格式，便于代码层面解析。如果模型返回格式异常，fallback 到不加载额外记忆（安全降级）。
+
+5. **对话历史感知** — 可选地将最近几轮对话的摘要传给推理模型，帮助理解"继续讨论""上次那个"等指代性表达。
+
+**TypeScript 实现**：
 
 ```typescript
-interface IntentMatch {
-  routeName: string;
-  confidence: "high" | "medium";
-  matchedBy: "keyword" | "pattern" | "history_continuation";
+import { loadRunEmbeddedPiAgent } from "openclaw/runtime"; // OpenClaw 内部 API
+
+interface ReasoningResult {
+  needs_memory: boolean;
+  files: string[];
+  reasoning: string;
 }
 
-function classifyIntent(
+async function reasonMemoryRoute(
   prompt: string,
   messages: unknown[],
-  routes: RouteConfig[],
-): IntentMatch[] {
-  const matches: IntentMatch[] = [];
+  memoryIndex: string,       // MEMORY.md 索引内容
+  config: PluginConfig,
+  api: OpenClawPluginApi,    // 插件 API，提供完整配置
+): Promise<ReasoningResult> {
+  // 1. 构建推理 prompt
+  const recentTopics = extractRecentTopics(messages, 3);
+  const reasoningPrompt = buildReasoningPrompt(prompt, memoryIndex, recentTopics);
 
-  for (const route of routes) {
-    // 1. 关键词匹配
-    if (route.match.keywords?.some(kw => prompt.includes(kw))) {
-      matches.push({ routeName: route.name, confidence: "high", matchedBy: "keyword" });
-      continue;
-    }
+  // 2. 解析 provider/model（三级回退）
+  const primary = api.config?.agents?.defaults?.model?.primary ?? "";
+  const [primaryProvider, primaryModel] = primary.split("/");
+  const provider = config.routingProvider ?? primaryProvider;
+  const model = config.routingModel ?? primaryModel;
 
-    // 2. 正则匹配
-    if (route.match.patterns?.some(p => new RegExp(p, "i").test(prompt))) {
-      matches.push({ routeName: route.name, confidence: "high", matchedBy: "pattern" });
-      continue;
-    }
+  // 3. 调用轻量模型（复用 OpenClaw 的 runEmbeddedPiAgent）
+  const runEmbeddedPiAgent = await loadRunEmbeddedPiAgent();
+  const result = await runEmbeddedPiAgent({
+    provider,                   // e.g. "alibaba"
+    model,                      // e.g. "qwen3.5-plus"
+    prompt: reasoningPrompt,
+    config: api.config,         // 传入完整配置（含 apiKey、baseUrl）
+    disableTools: true,         // 路由推理不需要工具调用
+    timeoutMs: 5000,            // 5s 超时保护
+    streamParams: {
+      temperature: 0,           // 确定性输出
+      maxTokens: 200,           // 路由决策不需要长输出
+    },
+  });
 
-    // 3. 对话延续检测：检查最近 3 轮 assistant 消息是否提到过该路由的关键词
-    if (isTopicContinuation(messages, route)) {
-      matches.push({ routeName: route.name, confidence: "medium", matchedBy: "history_continuation" });
-    }
+  // 4. 解析 JSON 响应
+  try {
+    const parsed = JSON.parse(result.output) as ReasoningResult;
+    return parsed;
+  } catch {
+    // 模型返回格式异常 → 安全降级：不加载额外记忆
+    return { needs_memory: false, files: [], reasoning: "parse_error" };
   }
-
-  return matches;
 }
-```
-
-**Level 2（可选）**：
-
-- 默认关闭，通过配置 `enable_llm_fallback: true` 开启
-- 使用独立的小模型调用，不影响主对话的模型选择
-- Prompt 模板：
-
-```
-Given the user message and a list of memory categories, 
-which categories are relevant? Reply with category names only.
-
-User message: "{prompt}"
-
-Categories:
-- 推荐系统/算法
-- 商业/产品
-- 组织管理
-- 创作/AI工具
-- 个人信息
-- 工作信息
-- 待办/决策
 ```
 
 ### 3. 文件选择与加载
 
+推理模型返回文件列表后，插件负责实际的文件读取和 token 预算控制。
+
 ```typescript
 interface LoadPlan {
-  files: string[];           // 最终要加载的文件路径列表
+  files: string[];                // 最终要加载的文件路径列表
   totalEstimatedTokens: number;
-  reasoning: string;         // 路由推理过程说明
+  reasoning: string;              // 模型的推理理由
 }
 
 async function buildLoadPlan(
-  matches: IntentMatch[],
-  routeTable: RouteTable,
+  reasoningResult: ReasoningResult,
   workspaceDir: string,
+  config: PluginConfig,
 ): Promise<LoadPlan> {
-  const files = new Set<string>();
-  let tokenBudget = routeTable.global.total_max_tokens;
-  const reasoning: string[] = [];
-
-  // 1. always_load 文件
-  for (const f of routeTable.global.always_load) {
-    files.add(f);
+  if (!reasoningResult.needs_memory || reasoningResult.files.length === 0) {
+    return { files: [], totalEstimatedTokens: 0, reasoning: reasoningResult.reasoning };
   }
 
-  // 2. 按匹配路由加载
-  for (const match of matches) {
-    const route = routeTable.routes.find(r => r.name === match.routeName);
-    if (!route) continue;
+  const resolvedFiles: string[] = [];
 
-    reasoning.push(`[${match.matchedBy}] "${match.routeName}" → ${route.load.join(", ")}`);
+  for (const filePath of reasoningResult.files) {
+    const fullPath = path.join(workspaceDir, filePath);
 
-    for (const target of route.load) {
-      if (target.startsWith("$recent_logs:")) {
-        // 特殊语法：解析最近 N 天日志
-        const days = parseInt(target.split(":")[1]);
-        const logFiles = await resolveRecentLogs(workspaceDir, days);
-        logFiles.forEach(f => files.add(f));
-      } else if (target.endsWith("/")) {
-        // 目录：加载目录下所有 .md 文件
-        const dirFiles = await resolveDirectory(workspaceDir, target);
-        dirFiles.forEach(f => files.add(f));
-      } else {
-        files.add(target);
-      }
+    if (filePath.endsWith("/")) {
+      // 目录：加载目录下所有 .md 文件
+      const dirFiles = await resolveDirectory(fullPath);
+      resolvedFiles.push(...dirFiles);
+    } else if (await fileExists(fullPath)) {
+      resolvedFiles.push(filePath);
     }
+    // 模型幻觉出不存在的文件 → 静默跳过
   }
 
-  // 3. Token 预算裁剪（如果超了，按优先级截断）
-  // ...
+  // Token 预算裁剪
+  const totalMaxTokens = config.totalMaxTokens ?? 8000;
+  const truncatedFiles = truncateByTokenBudget(resolvedFiles, workspaceDir, totalMaxTokens);
 
   return {
-    files: Array.from(files),
-    totalEstimatedTokens: estimateTokens(files),
-    reasoning: reasoning.join("\n"),
+    files: truncatedFiles,
+    totalEstimatedTokens: estimateTokens(truncatedFiles, workspaceDir),
+    reasoning: reasoningResult.reasoning,
   };
 }
+```
 ```
 
 ### 4. 上下文构建与注入
@@ -555,9 +522,9 @@ function buildPrependContext(
   const sections: string[] = [];
 
   // 可选：附带推理日志（调试用，可关闭）
-  if (config.enable_reasoning_log) {
+  if (config.enableReasoningLog) {
     sections.push(
-      `<!-- memory-reasoning route log:\n${reasoning}\n-->`
+      `<!-- memory-reasoning: ${reasoning} -->`
     );
   }
 
@@ -581,9 +548,9 @@ function buildPrependContext(
 ```typescript
 // src/index.ts
 import type { OpenClawPluginDefinition, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { loadRouteTable } from "./router/route-table";
-import { classifyIntent } from "./router/intent-classifier";
-import { buildLoadPlan } from "./router/file-selector";
+import { loadMemoryIndex } from "./reasoning/index-loader";
+import { reasonMemoryRoute } from "./reasoning/memory-router";
+import { buildLoadPlan } from "./loader/memory-reader";
 import { readMemoryFiles } from "./loader/memory-reader";
 import { buildPrependContext } from "./loader/context-builder";
 
@@ -591,7 +558,7 @@ const plugin: OpenClawPluginDefinition = {
   id: "memory-reasoning",
   name: "Memory Reasoning Router",
   version: "0.1.0",
-  description: "Reasoning-based memory routing — load memory by analyzing intent, not brute force",
+  description: "Reasoning-based memory routing — load memory by LLM understanding, not keyword matching",
 
   async register(api: OpenClawPluginApi) {
     api.on(
@@ -605,32 +572,34 @@ const plugin: OpenClawPluginDefinition = {
           return;
         }
 
-        // 1. 加载路由表（workspace 下的 route-table.yaml，带缓存）
-        const routeTable = await loadRouteTable(workspaceDir);
-        if (!routeTable) return;
+        // 1. 加载 MEMORY.md 索引（带文件缓存）
+        const memoryIndex = await loadMemoryIndex(workspaceDir);
+        if (!memoryIndex) return;
 
-        // 2. 意图分类
-        const matches = classifyIntent(prompt, messages, routeTable.routes);
-        if (matches.length === 0) {
-          return; // 不匹配任何路由 → 不注入额外记忆
+        // 2. 调用轻量模型做推理路由（复用 OpenClaw 模型配置）
+        const config = api.pluginConfig as PluginConfig;
+        const reasoningResult = await reasonMemoryRoute(
+          prompt, messages, memoryIndex, config, api
+        );
+        if (!reasoningResult.needs_memory) {
+          return; // 模型判断不需要记忆 → 不注入
         }
 
-        // 3. 构建加载计划
-        const plan = await buildLoadPlan(matches, routeTable, workspaceDir);
+        // 3. 构建加载计划（解析目录、校验文件存在、token 预算）
+        const plan = await buildLoadPlan(reasoningResult, workspaceDir, config);
         if (plan.files.length === 0) return;
 
         // 4. 读取文件
-        const memoryBasePath = `${workspaceDir}/${routeTable.global.memory_base_path}`;
-        const loadedFiles = await readMemoryFiles(memoryBasePath, plan.files);
+        const loadedFiles = await readMemoryFiles(workspaceDir, plan.files);
 
         // 5. 构建注入上下文
-        const context = buildPrependContext(loadedFiles, plan.reasoning, routeTable.global);
+        const context = buildPrependContext(loadedFiles, plan.reasoning, config);
 
         return {
           prependContext: context,
         };
       },
-      { priority: 50 },  // 较高优先级，确保记忆在其他插件上下文之前
+      { priority: 50 },
     );
   },
 };
@@ -667,11 +636,15 @@ export default plugin;
 
 | 环节 | 预估耗时 | 说明 |
 |------|---------|------|
-| 路由表加载 | ~1ms | YAML 解析 + 文件系统缓存（带 mtime 校验） |
-| Level 1 意图分类 | ~0ms | 纯字符串/正则操作 |
-| Level 2 LLM 推理 | ~200ms | 可选，默认关闭 |
+| 索引加载 | ~1ms | MEMORY.md 读取 + 文件系统缓存（带 mtime 校验） |
+| 推理模型调用 | ~200-400ms | 轻量模型（haiku/flash），输入 ~2K，输出 ~100 tokens |
 | 文件读取 | ~5-20ms | 2-5 个 .md 文件，并行读取 |
-| **总计** | **<25ms**（无 LLM） | 对用户感知延迟几乎无影响 |
+| **总计** | **~250-450ms** | 相当于多了一次小模型调用，换来精准记忆 |
+
+**延迟 vs 精度的权衡**：相比关键词硬匹配（~0ms），模型推理多了 ~300ms 延迟。但这个延迟换来的是：
+- 无需人工维护关键词列表
+- 能理解隐含意图和指代表达
+- 随记忆结构变化自动适应（只要索引文件更新）
 
 ### Token 预算控制
 
@@ -682,41 +655,38 @@ export default plugin;
   总计：3K-13K tokens
 
 本方案（推理路由）：
-  路由推理日志 ≈ 50-100 tokens
-  + 精准记忆文件 ≈ 1K-5K tokens（受 total_max_tokens 约束）
-  总计：1K-5K tokens
+  推理模型调用 ≈ 2K input + 100 output tokens（独立计费，haiku 成本极低）
+  + 精准记忆文件 ≈ 1K-5K tokens（注入主模型上下文）
+  总计：1K-5K tokens（主模型侧）
   
-预估节省：40%-70% 的记忆相关 token
+主模型 token 节省：40%-70%
+额外成本：每次对话多一次 haiku 调用（~$0.0001）
 ```
 
 ---
 
-## 路由表的维护方式
+## 索引文件的维护
 
-### 方案 A：手动维护（推荐初期）
+### 核心优势：无需额外维护
 
-用户直接编辑 `~/.openclaw/workspace/route-table.yaml`，根据自己的记忆结构调整路由规则。
+与关键词路由方案不同，本方案**直接复用 MEMORY.md**作为推理输入，用户不需要学习新格式或维护额外配置文件。
 
-**优点**：完全可控，规则透明
-**适合**：记忆结构稳定、类别清晰的场景
+用户照常维护 MEMORY.md：
+- 添加新的记忆文件 → 在索引中补一行描述
+- 调整目录结构 → 更新索引对应部分
+- 推理模型自动适应变化
 
-### 方案 B：自动生成（后续迭代）
+### 索引质量对推理效果的影响
 
-提供一个 CLI 工具或 Skill，扫描 `memory/` 目录结构 + 各文件的 README/标题，自动生成路由表草稿。
+模型的路由决策质量取决于索引描述的信息量：
 
-```
-openclaw-memory-reasoning generate-routes
-  → 扫描 memory/ 目录
-  → 读取每个子目录的 README.md 提取关键词
-  → 生成 route-table.yaml 草稿
-  → 用户 review 后生效
-```
+| 索引描述质量 | 示例 | 推理效果 |
+|-------------|------|---------|
+| 差 | `recsys-algorithm.md` （只有文件名） | 模型只能靠文件名猜测，可能漏选 |
+| 中 | `recsys-algorithm.md # 推荐系统` | 基本能匹配 |
+| 好 | `recsys-algorithm.md # 推荐系统、召回、排序、模型、特征工程、AB实验` | 精准匹配，包括隐含意图 |
 
-### 方案 C：运行时自学习（远期）
-
-通过 `llm_output` 观察型钩子，收集"哪些路由命中了 + Agent 是否额外搜索了记忆"的统计数据，用于优化路由表：
-- 如果某路由经常命中但 Agent 还是要额外 `memory_search` → 路由表漏了文件
-- 如果某路由加载的文件 Agent 从未引用 → 路由表太宽泛
+**建议**：在 MEMORY.md 的目录结构中，为每个文件附上简短的关键词描述。这本身也是好的索引实践，不是额外负担。
 
 ---
 
@@ -740,61 +710,79 @@ npm link
   "plugins": {
     "memory-reasoning": {
       "enabled": true,
-      "routeTablePath": "route-table.yaml",
-      "enableLlmFallback": false,
-      "enableReasoningLog": true,
-      "totalMaxTokens": 8000
+      "config": {
+        "routingProvider": "alibaba",         // 可选，指定推理路由使用的 provider
+        "routingModel": "qwen3.5-plus",       // 可选，指定推理路由使用的模型
+        "enableReasoningLog": true,           // 调试日志
+        "totalMaxTokens": 8000                // 注入主模型的 token 预算上限
+      }
     }
   }
 }
 ```
 
-### 在 workspace 中放置路由表
+**配置说明**：
+
+| 配置项 | 是否必须 | 默认值 | 说明 |
+|--------|:---:|--------|------|
+| `routingProvider` | 否 | 全局默认 provider | 推理路由调用的 LLM provider，不配置则回退到 `api.config.agents.defaults.model.primary` 的 provider |
+| `routingModel` | 否 | 全局默认 model | 推理路由调用的模型 ID，不配置则回退到全局默认模型 |
+| `enableReasoningLog` | 否 | `false` | 是否在 prependContext 中附带推理理由（调试用） |
+| `totalMaxTokens` | 否 | `8000` | 注入主模型上下文的 token 总预算 |
+
+**零配置快速启用**：如果不指定 `routingProvider` 和 `routingModel`，插件会自动复用当前 Agent 的默认模型。建议在生产环境中显式指定一个轻量模型（如 `qwen3.5-plus`、`claude-3-haiku`）以控制延迟和成本。
+
+### Workspace 结构（无需额外文件）
 
 ```
 ~/.openclaw/workspace/
-├── route-table.yaml        ← 新增：路由表配置
-├── MEMORY.md               ← 精简为纯索引（可选）
+├── MEMORY.md               ← 既是 Agent 的索引，也是推理模型的输入
 ├── memory/
 │   ├── insights/
 │   ├── projects/
 │   └── ...
 ```
 
+不需要 `route-table.yaml` — MEMORY.md 就是路由表。
+
 ---
 
 ## 实现路线图
 
-### Phase 1：MVP（核心路由）
+### Phase 1：MVP（模型推理路由）
 - [ ] 插件骨架 + `before_prompt_build` 注册
-- [ ] YAML 路由表解析器
-- [ ] Level 1 关键词/正则意图分类
+- [ ] MEMORY.md 索引加载器（带文件缓存）
+- [ ] 推理 Prompt 模板 + 轻量模型调用
+- [ ] JSON 响应解析 + 安全降级
 - [ ] 文件读取 + prependContext 构建
 - [ ] 基本 token 预算控制
 
-### Phase 2：增强（对话感知）
-- [ ] 对话历史话题延续检测
-- [ ] `$recent_logs:N` 特殊语法支持
+### Phase 2：增强（上下文感知）
+- [ ] 对话历史摘要传入推理模型（理解指代）
+- [ ] 推理结果缓存（相同话题的连续消息复用上一次结果）
 - [ ] 目录通配符解析
-- [ ] 路由表热加载（文件变更自动重载）
+- [ ] 索引文件热加载（mtime 变更检测）
 
-### Phase 3：可选 LLM 推理
-- [ ] Level 2 小模型意图分类
-- [ ] 配置化的 fallback 策略
+### Phase 3：可观测性
+- [ ] 推理日志输出（路由决策 + 理由）
+- [ ] `llm_output` 钩子收集使用统计
+- [ ] 路由效果报告（命中率、Agent 额外搜索率）
 
 ### Phase 4：自适应优化
-- [ ] `llm_output` 钩子收集使用统计
-- [ ] 路由表自动生成 CLI
-- [ ] 路由效果报告
+- [ ] 推理模型可配置切换（haiku / flash / 本地模型）
+- [ ] 索引质量检测（提示用户补充描述）
+- [ ] 多 workspace 支持
 
 ---
 
 ## 开放问题
 
-1. **MEMORY.md 是否需要改造？** 当前 MEMORY.md 既是索引又是给 Agent 看的文本。引入插件后，路由逻辑由 `route-table.yaml` 承担，MEMORY.md 可以精简为纯人类可读的目录概览，不再需要"主题→文件映射表"。但这意味着两套配置要保持同步。
+1. **~~推理模型的 API Key 来源？~~（已解决）** ✅ 复用 OpenClaw 的 `runEmbeddedPiAgent()` 内部调用机制，通过 `api.config` 自动获取已配置 provider 的 apiKey 和 baseUrl。插件可在 `pluginConfig` 中通过 `routingProvider`/`routingModel` 指定推理模型，不配置则回退到全局默认模型。参考实现：`llm-task` bundled extension。
 
-2. **与 `memory_search` 工具的分工？** 插件做"粗路由"（基于话题分类加载整个文件），`memory_search` 做"细查询"（在具体文件中找特定信息）。两者互补，但需要在 Skill SOP 中明确说明这个分工。
+2. **推理模型幻觉文件路径怎么办？** 模型可能返回索引中不存在的文件路径。当前设计是静默跳过（`fileExists` 校验），但应该记录日志以便发现索引描述不清晰的情况。
 
-3. **多 workspace 支持？** 如果用户有多个 workspace（工作/个人），路由表是否需要感知当前 workspace 的记忆结构差异？初期建议每个 workspace 独立维护自己的 `route-table.yaml`。
+3. **与 `memory_search` 工具的分工？** 插件做"粗路由"（基于索引理解加载整个文件），`memory_search` 做"细查询"（在具体文件中找特定段落）。两者互补，但需要在 Skill SOP 中明确说明这个分工——Agent 已有精准记忆时应减少冗余搜索。
 
-4. **路由表的版本管理？** 路由表随记忆结构演进需要更新。是否纳入 Git 管理？建议是——因为路由表本身是记忆系统的"元配置"。
+4. **连续对话的推理优化？** 如果用户连续 5 条消息都在聊推荐系统，每条都调一次推理模型是否浪费？可以考虑"话题延续检测"——如果推理结果与上一次相同且间隔 < 5 分钟，复用缓存。
+
+5. **推理延迟是否可接受？** ~300ms 的额外延迟对交互式对话影响不大，但对高频自动化场景（如 Cron/Heartbeat）可能需要跳过推理。可以通过检测 `ctx.messageProvider` 或 session 类型来决定是否执行推理。
