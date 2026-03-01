@@ -10,7 +10,11 @@
       "feeds": {
         "type": "array",
         "items": { "type": "string" },
-        "default": ["https://rss.arxiv.org/rss/cs.IR"]
+        "default": [
+          "https://rss.arxiv.org/rss/cs.IR",
+          "https://rss.arxiv.org/rss/cs.AI",
+          "https://rss.arxiv.org/rss/cs.LG"
+        ]
       },
       "fetchIntervalHours": {
         "type": "number",

@@ -1,5 +1,7 @@
 import { createFeedService } from "./feeds/service.js";
-import { createSearchFeedTool, setStateDir } from "./tools/search-feed.js";
+import { setStateDir } from "./tools/search-feed.js";
+import { createNavigateKnowledgeTool, setNavStateDir } from "./tools/navigate-knowledge.js";
+import { loadRunEmbeddedPiAgent } from "./llm/loader.js";
 
 interface PluginApi {
   id: string;
@@ -27,9 +29,17 @@ interface PluginConfig {
   fetchDays?: number;
 }
 
-const DEFAULT_FEEDS = ["https://rss.arxiv.org/rss/cs.IR"];
+const DEFAULT_FEEDS = [
+  "https://rss.arxiv.org/rss/cs.IR",
+  "https://rss.arxiv.org/rss/cs.AI",
+  "https://rss.arxiv.org/rss/cs.LG",
+];
 const DEFAULT_INTERVAL_HOURS = 6;
 const DEFAULT_FETCH_DAYS = 3;
+
+// LLM 配置：环境变量 > 硬编码默认值
+const DEFAULT_SUMMARY_PROVIDER = process.env.PERSONAL_REC_PROVIDER ?? "alibaba";
+const DEFAULT_SUMMARY_MODEL = process.env.PERSONAL_REC_MODEL ?? "qwen3-coder-plus";
 
 const plugin = {
   id: "personal-rec",
@@ -43,18 +53,51 @@ const plugin = {
     const intervalHours = config.fetchIntervalHours ?? DEFAULT_INTERVAL_HOURS;
     const fetchDays = config.fetchDays ?? DEFAULT_FETCH_DAYS;
 
-    const feedService = createFeedService({ feeds, intervalHours, fetchDays, logger: api.logger });
+    // 读取 openclaw 全局 config（用于 custom provider apiKey 解析）
+    let openclawConfig: Record<string, unknown> | undefined;
+    try {
+      const { readFileSync } = require("node:fs");
+      const configPath = `${process.env.HOME}/.openclaw/openclaw.json`;
+      openclawConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    } catch {
+      // non-critical
+    }
 
-    // Wrap service to capture stateDir for tool use
+    const agentDir = `${process.env.HOME}/.openclaw/agents/main/agent`;
+
+    const feedService = createFeedService({
+      feeds,
+      intervalHours,
+      fetchDays,
+      logger: api.logger,
+      provider: DEFAULT_SUMMARY_PROVIDER,
+      model: DEFAULT_SUMMARY_MODEL,
+      agentDir,
+      config: openclawConfig,
+    });
+
+    // Wrap service to capture stateDir + verify LLM availability
     api.registerService({
       ...feedService,
       async start(ctx: { stateDir: string; config: unknown; logger: { info: (m: string) => void; error: (m: string) => void } }) {
         setStateDir(ctx.stateDir);
+        setNavStateDir(ctx.stateDir);
+
+        // Step 0 验证: runEmbeddedPiAgent 是否可加载
+        try {
+          const fn = await loadRunEmbeddedPiAgent();
+          api.logger.info(`[personal-rec] ✅ runEmbeddedPiAgent loaded (typeof=${typeof fn})`);
+        } catch (err) {
+          api.logger.warn(`[personal-rec] ⚠️ runEmbeddedPiAgent not available: ${(err as Error).message}`);
+        }
+
         return feedService.start(ctx);
       },
     });
 
-    api.registerTool(createSearchFeedTool(), { name: "search_feed" });
+    // search_feed 降级为内部工具，不再对外注册（Phase 2 Step 5）
+    // search_feed 代码保留，仅供冷启动兜底时内部调用
+    api.registerTool(createNavigateKnowledgeTool(), { name: "navigate_knowledge" });
 
     api.logger.info(
       `[personal-rec] registered — ${feeds.length} feed(s), interval ${intervalHours}h`,
