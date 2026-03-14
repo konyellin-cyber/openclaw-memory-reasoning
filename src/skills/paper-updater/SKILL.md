@@ -20,6 +20,8 @@ description: 手动触发个人推荐系统的论文更新管道。当用户说"
 - personal-rec 插件已部署到 `~/.openclaw/extensions/personal-rec/`
 - 项目源码在 `~/openclaw-memory-reasoning/`
 
+> ⚠️ **运行位置要求**：脚本必须在 `~/openclaw-memory-reasoning` 目录下运行，因为需要引用 `dist/` 下的模块。
+
 ## 执行流程
 
 ### Step 1: 检查当前状态
