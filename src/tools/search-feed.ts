@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { loadFeedItems, getDataDir } from "../feeds/storage.js";
-import { loadCard, type SummaryCard } from "../knowledge/graph.js";
+import { loadCard, type SummaryCard, type ContentCard } from "../knowledge/graph.js";
 import type { FeedItem } from "../feeds/parser.js";
 
 // State dir will be resolved at tool execution time
@@ -127,14 +127,13 @@ async function formatItemsWithCards(
 }
 
 /** 摘要卡格式 — 精简，省 token */
-function formatCardItem(idx: number, card: SummaryCard): string {
+function formatCardItem(idx: number, card: ContentCard): string {
   return (
     `[${idx}] ${card.title}\n` +
-    `    Tags: ${card.tags.join(", ")}\n` +
+    `    Tags: ${(card.tags ?? []).join(", ")}\n` +
     `    Summary: ${card.oneLiner}\n` +
-    `    Signal: ${card.qualitySignal}\n` +
-    `    Source: ${card.source} | Date: ${card.date}\n` +
-    `    URL: ${card.url}`
+    `    Source: ${card.source} | Date: ${card.date}` +
+    (card.url ? `\n    URL: ${card.url}` : "")
   );
 }
 

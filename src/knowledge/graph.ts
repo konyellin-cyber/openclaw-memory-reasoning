@@ -2,12 +2,17 @@
  * 语义网 CRUD — 管理 knowledge/graph.json 和 cards/ 目录
  *
  * 数据结构：
- *   ~/.openclaw/personal-rec/knowledge/
+ *   ~/.openclaw/personal-rec/knowledge/  (外部记忆)
  *   ├── graph.json          # 语义网（节点 + 边）
- *   ├── cards/              # 摘要卡 JSON 文件
+ *   ├── cards/              # 内容卡片 JSON 文件（论文/记忆）
  *   │   ├── 2602.12345.json
  *   │   └── ...
  *   └── signals.json        # 入库时的微感知信号
+ *
+ *   ~/.openclaw/memory-index/  (内部记忆，Phase R.2 创建)
+ *   ├── graph.json
+ *   ├── cards/
+ *   └── signals.json
  */
 
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
@@ -20,8 +25,11 @@ export interface GraphNode {
   id: string;
   description: string;
   parent: string | null;
-  papers: string[]; // paper IDs (arXiv IDs like "2602.12345")
+  items: string[]; // ContentCard IDs (e.g., "2602.12345" for papers, or custom IDs for memory)
   edges: GraphEdge[];
+  lastReorgAt?: string; // ISO date — 上次重整时间（由 reorganizer apply 后写入）
+  // Legacy property for backward compatibility (alias to items)
+  papers?: string[];
 }
 
 export interface GraphEdge {
@@ -36,20 +44,27 @@ export interface SemanticGraph {
   nodes: GraphNode[];
 }
 
-export interface SummaryCard {
-  id: string;           // arXiv ID
+export interface ContentCard {
+  id: string;           // arXiv ID for papers, or custom ID for memory
+  type: "paper" | "memory";
   title: string;
-  tags: string[];       // 2-3 个关键标签
   oneLiner: string;     // 一句话概括
-  qualitySignal: string;
-  source: string;       // e.g. "arxiv:cs.IR"
-  date: string;         // 发表日期
-  url: string;
-  generatedAt: string;  // 摘要卡生成时间
+  source: string;       // e.g. "arxiv:cs.IR" for papers, "memory/decisions.md" for memory
+  date: string;         // 发表日期或记忆日期
+  // ── 可选字段（兼容旧数据和论文系统） ──
+  tags?: string[];      // 论文系统仍使用；memory 不再生成
+  qualitySignal?: string; // 论文系统仍使用；memory 不再生成
+  url?: string;         // 论文链接或记忆文件链接
+  generatedAt?: string; // 摘要卡生成时间
+  sourceFile?: string;  // 源文件路径（仅 memory）
+  people?: string[];    // 相关人物（企微 ID），parser 从人物词典匹配提取
 }
 
+// Legacy type alias for backward compatibility
+export type SummaryCard = ContentCard;
+
 export interface ClassificationSignal {
-  paperId: string;
+  itemId: string;       // ContentCard ID
   assignedNode: string;
   confidence: "high" | "medium" | "low";
   perception: string | null; // 微感知信号（如 "这篇和节点X的方向不太匹配"）
@@ -101,9 +116,9 @@ function createEmptyGraph(): SemanticGraph {
     nodes: [
       {
         id: "root",
-        description: "所有论文的根节点（冷启动状态）",
+        description: "所有项目的根节点（冷启动状态）",
         parent: null,
-        papers: [],
+        items: [],
         edges: [],
       },
     ],
@@ -138,16 +153,25 @@ export function getNode(graph: SemanticGraph, nodeId: string): GraphNode | undef
   return graph.nodes.find((n) => n.id === nodeId);
 }
 
-export function addPaperToNode(graph: SemanticGraph, nodeId: string, paperId: string): boolean {
+export function addItemToNode(graph: SemanticGraph, nodeId: string, itemId: string): boolean {
   const node = getNode(graph, nodeId);
   if (!node) return false;
-  if (node.papers.includes(paperId)) return false; // already exists
-  node.papers.push(paperId);
+  if (node.items.includes(itemId)) return false; // already exists
+  node.items.push(itemId);
   return true;
 }
 
+export function hasItem(graph: SemanticGraph, itemId: string): boolean {
+  return graph.nodes.some((n) => n.items.includes(itemId));
+}
+
+// Legacy aliases for backward compatibility
+export function addPaperToNode(graph: SemanticGraph, nodeId: string, paperId: string): boolean {
+  return addItemToNode(graph, nodeId, paperId);
+}
+
 export function hasPaper(graph: SemanticGraph, paperId: string): boolean {
-  return graph.nodes.some((n) => n.papers.includes(paperId));
+  return hasItem(graph, paperId);
 }
 
 // ─── Phase 2: 多节点操作 ───
@@ -191,25 +215,25 @@ export function removeEdge(graph: SemanticGraph, fromId: string, targetId: strin
   return true;
 }
 
-/** 批量迁移论文：从 fromNode 移到 toNode */
-export function movePapers(
+/** 批量迁移项目：从 fromNode 移到 toNode */
+export function moveItems(
   graph: SemanticGraph,
-  paperIds: string[],
+  itemIds: string[],
   fromId: string,
   toId: string,
 ): { moved: number; notFound: number } {
   const from = getNode(graph, fromId);
   const to = getNode(graph, toId);
-  if (!from || !to) return { moved: 0, notFound: paperIds.length };
+  if (!from || !to) return { moved: 0, notFound: itemIds.length };
 
   let moved = 0;
   let notFound = 0;
-  for (const pid of paperIds) {
-    const idx = from.papers.indexOf(pid);
+  for (const iid of itemIds) {
+    const idx = from.items.indexOf(iid);
     if (idx >= 0) {
-      from.papers.splice(idx, 1);
-      if (!to.papers.includes(pid)) {
-        to.papers.push(pid);
+      from.items.splice(idx, 1);
+      if (!to.items.includes(iid)) {
+        to.items.push(iid);
       }
       moved++;
     } else {
@@ -217,6 +241,16 @@ export function movePapers(
     }
   }
   return { moved, notFound };
+}
+
+// Legacy alias for backward compatibility
+export function movePapers(
+  graph: SemanticGraph,
+  paperIds: string[],
+  fromId: string,
+  toId: string,
+): { moved: number; notFound: number } {
+  return moveItems(graph, paperIds, fromId, toId);
 }
 
 /** 获取子节点（parent === nodeId 的所有节点） */
@@ -246,39 +280,55 @@ export function getTopLevelNodes(graph: SemanticGraph): GraphNode[] {
   return graph.nodes.filter((n) => n.parent === null || n.parent === "root");
 }
 
-/** 批量加载指定节点下所有论文的摘要卡 */
+/** 批量加载指定节点下所有项目的卡片 */
 export async function loadNodeCards(
   dataDir: string,
   graph: SemanticGraph,
   nodeId: string,
-): Promise<SummaryCard[]> {
+): Promise<ContentCard[]> {
   const node = getNode(graph, nodeId);
   if (!node) return [];
-  const cards: SummaryCard[] = [];
-  for (const pid of node.papers) {
-    const card = await loadCard(dataDir, pid);
+  const cards: ContentCard[] = [];
+  for (const iid of node.items) {
+    const card = await loadCard(dataDir, iid);
     if (card) cards.push(card);
   }
   return cards;
 }
 
-// ─── Summary Card CRUD ───
+/** 获取节点下的项目 ID 列表 */
+export function getNodeItemIds(graph: SemanticGraph, nodeId: string): string[] {
+  const node = getNode(graph, nodeId);
+  return node ? [...node.items] : [];
+}
 
-export async function saveCard(dataDir: string, card: SummaryCard): Promise<void> {
+// Legacy alias for backward compatibility
+export function getNodePaperIds(graph: SemanticGraph, nodeId: string): string[] {
+  return getNodeItemIds(graph, nodeId);
+}
+
+// ─── Content Card CRUD ───
+
+export async function saveCard(dataDir: string, card: ContentCard): Promise<void> {
   await ensureKnowledgeDir(dataDir);
   const cardPath = getCardPath(dataDir, card.id);
   await writeFile(cardPath, JSON.stringify(card, null, 2), "utf-8");
 }
 
-export async function loadCard(dataDir: string, paperId: string): Promise<SummaryCard | null> {
-  const cardPath = getCardPath(dataDir, paperId);
+export async function loadCard(dataDir: string, itemId: string): Promise<ContentCard | null> {
+  const cardPath = getCardPath(dataDir, itemId);
   if (!existsSync(cardPath)) return null;
   try {
     const raw = await readFile(cardPath, "utf-8");
-    return JSON.parse(raw) as SummaryCard;
-  } catch {
+    return JSON.parse(raw) as ContentCard;
+  } catch (error) {
     return null;
   }
+}
+
+// Legacy aliases for backward compatibility
+export async function loadCardLegacy(dataDir: string, paperId: string): Promise<SummaryCard | null> {
+  return loadCard(dataDir, paperId);
 }
 
 export async function cardExists(dataDir: string, paperId: string): Promise<boolean> {
@@ -318,9 +368,13 @@ export async function appendSignal(dataDir: string, signal: ClassificationSignal
 
 export interface KnowledgeStats {
   nodeCount: number;
-  totalPapers: number;
+  totalItems: number;
   cardCount: number;
   signalCount: number;
+  itemsByType: {
+    paper: number;
+    memory: number;
+  };
 }
 
 export async function getStats(dataDir: string): Promise<KnowledgeStats> {
@@ -328,12 +382,22 @@ export async function getStats(dataDir: string): Promise<KnowledgeStats> {
   const cardIds = await listCardIds(dataDir);
   const signals = await loadSignals(dataDir);
 
-  const totalPapers = graph.nodes.reduce((sum, n) => sum + n.papers.length, 0);
+  const totalItems = graph.nodes.reduce((sum, n) => sum + n.items.length, 0);
+
+  // Count items by type
+  const itemsByType = { paper: 0, memory: 0 };
+  for (const itemId of cardIds) {
+    const card = await loadCard(dataDir, itemId);
+    if (card) {
+      itemsByType[card.type]++;
+    }
+  }
 
   return {
     nodeCount: graph.nodes.length,
-    totalPapers,
+    totalItems,
     cardCount: cardIds.length,
     signalCount: signals.signals.length,
+    itemsByType,
   };
 }

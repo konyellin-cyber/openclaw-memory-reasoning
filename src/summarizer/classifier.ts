@@ -14,6 +14,8 @@ import {
   saveGraph,
   addPaperToNode,
   hasPaper,
+  addItemToNode,
+  hasItem,
   loadCard,
   listCardIds,
   appendSignal,
@@ -21,6 +23,7 @@ import {
   getChildren,
   type ClassificationSignal,
   type SummaryCard,
+  type ContentCard,
   type SemanticGraph,
   type GraphNode,
 } from "../knowledge/graph.js";
@@ -70,15 +73,15 @@ const CLASSIFY_SYSTEM_PROMPT = `你是论文归类助手。给定一篇论文的
 - confidence: 有明确匹配的用 "high"，勉强匹配用 "medium"，都不太合适用 "low"
 - perception: confidence 为 "low" 时必须说明原因（用于触发未来的重整），否则为 null`;
 
-function buildClassifyPrompt(card: SummaryCard, nodes: GraphNode[]): string {
+function buildClassifyPrompt(card: ContentCard, nodes: GraphNode[]): string {
   const nodeList = nodes
-    .map((n) => `  - [${n.id}] ${n.description} (${n.papers.length} papers)`)
+    .map((n) => `  - [${n.id}] ${n.description} (${n.items.length} items)`)
     .join("\n");
 
   return `请为以下论文选择归属节点：
 
 Paper: ${card.title}
-Tags: ${card.tags.join(", ")}
+Tags: ${(card.tags ?? []).join(", ")}
 Summary: ${card.oneLiner}
 Signal: ${card.qualitySignal}
 
@@ -161,7 +164,7 @@ async function classifyToRoot(
       addPaperToNode(graph, targetNode, paperId);
 
       const signal: ClassificationSignal = {
-        paperId,
+        itemId: paperId,
         assignedNode: targetNode,
         confidence: "high",
         perception: null,
@@ -252,7 +255,7 @@ async function classifyWithLLM(
 
       // 记录信号
       const signal: ClassificationSignal = {
-        paperId,
+        itemId: paperId,
         assignedNode: classification.assignedNodes[0] ?? "root",
         confidence: classification.confidence,
         perception: classification.perception,

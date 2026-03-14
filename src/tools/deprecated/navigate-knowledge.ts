@@ -128,7 +128,7 @@ export function createNavigateKnowledgeTool() {
 
 function handleOverview(graph: SemanticGraph) {
   const topNodes = getTopLevelNodes(graph);
-  const totalPapers = graph.nodes.reduce((s, n) => s + n.papers.length, 0);
+  const totalPapers = graph.nodes.reduce((s, n) => s + n.items.length, 0);
 
   // 如果只有 root 节点且没有子节点，提示还没重整
   const root = getNode(graph, "root");
@@ -140,7 +140,7 @@ function handleOverview(graph: SemanticGraph) {
         {
           type: "text" as const,
           text: [
-            `Knowledge graph has 1 node (root) with ${root.papers.length} papers.`,
+            `Knowledge graph has 1 node (root) with ${root.items.length} papers.`,
             `The graph has not been reorganized into topic nodes yet.`,
             `You can still use action='read_papers' with nodeId='root' to browse papers.`,
             `Papers are sorted by date (newest first) and support limit/since filtering.`,
@@ -160,8 +160,8 @@ function handleOverview(graph: SemanticGraph) {
   // root 节点信息
   if (root) {
     lines.push(`### Root: ${root.description}`);
-    if (root.papers.length > 0) {
-      lines.push(`  Uncategorized papers: ${root.papers.length}`);
+    if (root.items.length > 0) {
+      lines.push(`  Uncategorized papers: ${root.items.length}`);
     }
     lines.push(``);
   }
@@ -172,7 +172,7 @@ function handleOverview(graph: SemanticGraph) {
     for (const child of children) {
       const neighborCount = child.edges.length;
       lines.push(
-        `  - **[${child.id}]** ${child.description} (${child.papers.length} papers${neighborCount > 0 ? `, ${neighborCount} edges` : ""})`,
+        `  - **[${child.id}]** ${child.description} (${child.items.length} papers${neighborCount > 0 ? `, ${neighborCount} edges` : ""})`,
       );
     }
   }
@@ -183,7 +183,7 @@ function handleOverview(graph: SemanticGraph) {
     lines.push(``);
     lines.push(`### Other Nodes`);
     for (const n of otherTop) {
-      lines.push(`  - **[${n.id}]** ${n.description} (${n.papers.length} papers)`);
+      lines.push(`  - **[${n.id}]** ${n.description} (${n.items.length} papers)`);
     }
   }
 
@@ -212,7 +212,7 @@ function handleExplore(graph: SemanticGraph, nodeId?: string) {
   const lines: string[] = [
     `## Node: ${node.id}`,
     `Description: ${node.description}`,
-    `Papers: ${node.papers.length}`,
+    `Papers: ${node.items.length}`,
     ``,
   ];
 
@@ -220,7 +220,7 @@ function handleExplore(graph: SemanticGraph, nodeId?: string) {
   if (children.length > 0) {
     lines.push(`### Sub-topics (${children.length})`);
     for (const child of children) {
-      lines.push(`  - **[${child.id}]** ${child.description} (${child.papers.length} papers)`);
+      lines.push(`  - **[${child.id}]** ${child.description} (${child.items.length} papers)`);
     }
     lines.push(``);
   }
@@ -230,7 +230,7 @@ function handleExplore(graph: SemanticGraph, nodeId?: string) {
     lines.push(`### Connected Nodes (via edges)`);
     for (const { node: neighbor, relation } of neighbors) {
       lines.push(
-        `  - **[${neighbor.id}]** ← "${relation}" → ${neighbor.description} (${neighbor.papers.length} papers)`,
+        `  - **[${neighbor.id}]** ← "${relation}" → ${neighbor.description} (${neighbor.items.length} papers)`,
       );
     }
     lines.push(``);
@@ -246,7 +246,7 @@ function handleExplore(graph: SemanticGraph, nodeId?: string) {
     }
   }
 
-  if (node.papers.length > 0) {
+  if (node.items.length > 0) {
     lines.push(`💡 Use action="read_papers" with nodeId="${nodeId}" to see paper details.`);
   }
   if (children.length > 0) {
@@ -257,7 +257,7 @@ function handleExplore(graph: SemanticGraph, nodeId?: string) {
     content: [{ type: "text" as const, text: lines.join("\n") }],
     details: {
       nodeId: node.id,
-      paperCount: node.papers.length,
+      paperCount: node.items.length,
       childCount: children.length,
       edgeCount: neighbors.length,
     },
@@ -279,7 +279,7 @@ async function handleReadPapers(
     return errorResult(`Node "${nodeId}" not found.`);
   }
 
-  if (node.papers.length === 0) {
+  if (node.items.length === 0) {
     return {
       content: [{ type: "text" as const, text: `Node "${nodeId}" has no papers.` }],
       details: { nodeId, count: 0 },
@@ -306,7 +306,7 @@ async function handleReadPapers(
 
   const lines: string[] = [
     `## Papers in [${nodeId}] — ${node.description}`,
-    `Total in node: ${node.papers.length} | Filtered: ${totalFiltered}${sinceDate ? ` (since ${sinceDate})` : ""} | Showing: ${offset + 1}–${offset + paged.length}`,
+    `Total in node: ${node.items.length} | Filtered: ${totalFiltered}${sinceDate ? ` (since ${sinceDate})` : ""} | Showing: ${offset + 1}–${offset + paged.length}`,
     ``,
   ];
 
@@ -326,7 +326,7 @@ async function handleReadPapers(
   // 没有摘要卡的论文只在不分页时提示数量
   if (!sinceDate && offset === 0) {
     const cardsIds = new Set(cards.map((c) => c.id));
-    const noCardCount = node.papers.filter((p) => !cardsIds.has(p)).length;
+    const noCardCount = node.items.filter((p) => !cardsIds.has(p)).length;
     if (noCardCount > 0) {
       lines.push(``);
       lines.push(`### ${noCardCount} paper(s) without summary cards (not shown)`);
@@ -342,7 +342,7 @@ async function handleReadPapers(
     content: [{ type: "text" as const, text: lines.join("\n") }],
     details: {
       nodeId,
-      totalInNode: node.papers.length,
+      totalInNode: node.items.length,
       filtered: totalFiltered,
       showing: paged.length,
       offset,

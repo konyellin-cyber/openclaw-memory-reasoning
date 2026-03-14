@@ -23,9 +23,11 @@ import {
   addNode,
   addEdge,
   movePapers,
+  moveItems,
   loadNodeCards,
   type SemanticGraph,
   type GraphNode,
+  type ContentCard,
   type SummaryCard,
 } from "./graph.js";
 
@@ -131,7 +133,7 @@ function buildStage1Prompt(
     .join("\n");
 
   const titleList = sampleTitles
-    .map((t) => `  - [${t.id}] ${t.title} (tags: ${t.tags.join(", ")})`)
+    .map((t) => `  - [${t.id}] ${t.title} (tags: ${(t.tags ?? []).join(", ")})`)
     .join("\n");
 
   return `节点「${sourceNodeId}」（${sourceDescription}）下共有 ${totalPapers} 篇论文。
@@ -175,7 +177,7 @@ function buildStage2Prompt(
 
   const paperList = batch
     .map((c) =>
-      `  - id=${c.id} | ${c.title}\n    Tags: ${c.tags.join(", ")}\n    Summary: ${c.oneLiner}`,
+      `  - id=${c.id} | ${c.title}\n    Tags: ${(c.tags ?? []).join(", ")}\n    Summary: ${c.oneLiner}`,
     )
     .join("\n\n");
 
@@ -215,7 +217,7 @@ export async function reorganize(
     return { success: false, diff: null, applied: false, error: `Node "${nodeId}" has no cards` };
   }
 
-  logger.info(`[reorganizer] Node "${nodeId}" has ${node.papers.length} papers, ${cards.length} with cards`);
+  logger.info(`[reorganizer] Node "${nodeId}" has ${node.items.length} items, ${cards.length} with cards`);
 
   const llmOpts = { provider, model, agentDir, config, dataDir };
   const overallStart = Date.now();
@@ -239,7 +241,7 @@ export async function reorganize(
     logger.info(`[reorganizer] Stage 1: No split needed — ${stage1Result.reason}`);
     return {
       success: true,
-      diff: { sourceNode: nodeId, newNodes: [], newEdges: [], remainingPapers: node.papers },
+      diff: { sourceNode: nodeId, newNodes: [], newEdges: [], remainingPapers: node.items },
       applied: false,
       meta: {
         durationMs: Date.now() - overallStart,
@@ -400,7 +402,7 @@ function computeTagStats(cards: SummaryCard[]): TagStatsResult {
   // 统计 tag 频率
   const counter = new Map<string, number>();
   for (const c of cards) {
-    for (const t of c.tags) {
+    for (const t of c.tags ?? []) {
       counter.set(t, (counter.get(t) ?? 0) + 1);
     }
   }
@@ -418,11 +420,11 @@ function computeTagStats(cards: SummaryCard[]): TagStatsResult {
 
   for (const { tag } of tagStats) {
     if (sampleTitles.length >= maxSamples) break;
-    const matching = cards.filter((c) => c.tags.includes(tag) && !usedIds.has(c.id));
+    const matching = cards.filter((c) => (c.tags ?? []).includes(tag) && !usedIds.has(c.id));
     for (const m of matching.slice(0, 2)) {
       if (sampleTitles.length >= maxSamples) break;
       usedIds.add(m.id);
-      sampleTitles.push({ id: m.id, title: m.title, tags: m.tags });
+      sampleTitles.push({ id: m.id, title: m.title, tags: m.tags ?? [] });
     }
   }
 
@@ -623,14 +625,15 @@ function applyDiff(graph: SemanticGraph, diff: ReorgDiff, parentId: string): voi
       id: nn.id,
       description: nn.description,
       parent: parentId,
-      papers: [],
+      items: [],
       edges: [],
+      papers: [], // Legacy for backward compatibility
     };
     addNode(graph, newNode);
   }
 
   for (const nn of diff.newNodes) {
-    movePapers(graph, nn.papers, parentId, nn.id);
+    moveItems(graph, nn.papers, parentId, nn.id);
   }
 
   for (const ne of diff.newEdges) {
@@ -641,5 +644,11 @@ function applyDiff(graph: SemanticGraph, diff: ReorgDiff, parentId: string): voi
   const parent = getNode(graph, parentId);
   if (parent && parent.description.includes("冷启动")) {
     parent.description = parent.description.replace("（冷启动状态）", "（已分裂）");
+  }
+
+  // 记录重整时间（供 Phase 3 trigger 使用）
+  const sourceNode = getNode(graph, parentId);
+  if (sourceNode) {
+    sourceNode.lastReorgAt = new Date().toISOString();
   }
 }

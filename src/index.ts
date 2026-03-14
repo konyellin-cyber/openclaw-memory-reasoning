@@ -1,6 +1,5 @@
 import { createFeedService } from "./feeds/service.js";
 import { setStateDir } from "./tools/search-feed.js";
-import { createNavigateKnowledgeTool, setNavStateDir } from "./tools/navigate-knowledge.js";
 import { loadRunEmbeddedPiAgent } from "./llm/loader.js";
 
 interface PluginApi {
@@ -33,6 +32,9 @@ const DEFAULT_FEEDS = [
   "https://rss.arxiv.org/rss/cs.IR",
   "https://rss.arxiv.org/rss/cs.AI",
   "https://rss.arxiv.org/rss/cs.LG",
+  "https://rss.arxiv.org/rss/cs.SI",  // Social & Information Networks
+  "https://rss.arxiv.org/rss/cs.CL",  // Computation and Language (NLP)
+  "https://rss.arxiv.org/rss/cs.CV",  // Computer Vision
 ];
 const DEFAULT_INTERVAL_HOURS = 6;
 const DEFAULT_FETCH_DAYS = 3;
@@ -81,7 +83,6 @@ const plugin = {
       ...feedService,
       async start(ctx: { stateDir: string; config: unknown; logger: { info: (m: string) => void; error: (m: string) => void } }) {
         setStateDir(ctx.stateDir);
-        setNavStateDir(ctx.stateDir);
 
         // Step 0 验证: runEmbeddedPiAgent 是否可加载
         try {
@@ -95,9 +96,14 @@ const plugin = {
       },
     });
 
+    // navigate_knowledge 已迁移到 semantic-navigator Skill (Phase R.5)
+    // 不再注册为 Plugin tool，导航功能通过 Skill 提供
+    api.logger.info(
+      `[personal-rec] ℹ️ navigate_knowledge tool 已废弃，请使用 semantic-navigator Skill (--source papers|memory)`,
+    );
+
     // search_feed 降级为内部工具，不再对外注册（Phase 2 Step 5）
     // search_feed 代码保留，仅供冷启动兜底时内部调用
-    api.registerTool(createNavigateKnowledgeTool(), { name: "navigate_knowledge" });
 
     api.logger.info(
       `[personal-rec] registered — ${feeds.length} feed(s), interval ${intervalHours}h`,

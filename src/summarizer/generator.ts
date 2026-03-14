@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 
 import { loadRunEmbeddedPiAgent, collectText, stripCodeFences } from "../llm/loader.js";
-import type { SummaryCard } from "../knowledge/graph.js";
+import type { SummaryCard, ContentCard } from "../knowledge/graph.js";
 import { cardExists, saveCard } from "../knowledge/graph.js";
 import type { FeedItem } from "../feeds/parser.js";
 
@@ -140,7 +140,7 @@ export async function generateSummaryCards(
       continue;
     }
 
-    let card: SummaryCard | null = null;
+    let card: ContentCard | null = null;
     let meta: CallMeta | null = null;
     let lastError = "";
 
@@ -233,7 +233,7 @@ async function callLLMForCard(
   item: FeedItem,
   tmpSessionDir: string,
   opts?: { provider?: string; model?: string; agentDir?: string; config?: Record<string, unknown> },
-): Promise<{ card: SummaryCard; meta: CallMeta }> {
+): Promise<{ card: ContentCard; meta: CallMeta }> {
   const runId = randomUUID();
   const sessionId = `summarizer-${item.id}-${runId.slice(0, 8)}`;
   // 每次调用创建独立的 workspaceDir，避免 Gateway 扫描同目录其他文件干扰 system prompt
@@ -288,8 +288,9 @@ async function callLLMForCard(
       throw new Error(`Incomplete JSON: ${cleaned.slice(0, 100)}`);
     }
 
-    const card: SummaryCard = {
+    const card: ContentCard = {
       id: item.id,
+      type: "paper",
       title: item.title,
       tags: parsed.tags.slice(0, 3),
       oneLiner: parsed.oneLiner,
