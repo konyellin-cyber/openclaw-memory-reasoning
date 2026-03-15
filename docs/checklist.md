@@ -74,6 +74,44 @@
 
 ---
 
+### Step R.1.1: search Action 实现（导航 Skill 扩展）
+
+> 目标：在 semantic-navigator Skill 中新增 search action，支持对话中触发主动搜索
+>
+> **前置依赖**：Phase 5 ✅（主动搜索管道已实现）
+
+**具体任务**：
+- [x] navigate.ts 扩展
+  - [x] 新增 `--action search` 支持
+  - [x] 参数解析：`--mode`（query-only|dry-run|full）、`--direction`、`--query`
+  - [x] 复用 `src/search/pipeline.ts` 的 `runProactiveSearch()`
+  - [x] 输出格式：Markdown 统计摘要 + 新增论文列表
+  - [x] 默认 provider/model：`--provider alibaba --model glm-5`
+- [x] SKILL.md 更新
+  - [x] 补充 search action 说明
+  - [x] 补充对话场景映射表
+  - [x] 明确"写操作"警告（会改变 graph.json 和 cards/）
+- [x] 验证
+  - [x] CLI 测试：`npx tsx navigate.ts --source papers --action search --mode query-only` — ✅ 成功生成 9 条 query（66.2s）
+  - [x] CLI help 测试：所有参数正确显示 — ✅
+  - [x] TypeScript 编译：`npx tsc --noEmit` 零错误 — ✅
+  - [x] API key 问题修复：`auth-profiles.json` 添加 alibaba provider — ✅
+  - [x] 部署验证：`npm run deploy` + `openclaw gateway restart` — ✅
+  - [ ] CLI 测试：`npx tsx navigate.ts --source papers --action search --mode dry-run` — 待测试
+  - [ ] CLI 测试：`npx tsx navigate.ts --source papers --action search --mode full` — 待测试
+  - [ ] CLI 测试：`npx tsx navigate.ts --source papers --action search --direction recommendation-system` — 待实现 direction 过滤逻辑
+
+**验收**：
+- [x] `--action search --mode query-only` 正常输出 query 列表 — ✅ 9 条 query，意图筛选 14→3 节点
+- [ ] `--action search --mode dry-run` 正常输出预览（不入库）— 待测试
+- [ ] `--action search --mode full` 正常入库（graph.json + cards/）— 待测试
+- [ ] `--direction` 参数正确限定搜索方向 — 待实现过滤逻辑
+- [ ] `--query` 参数正确跳过 LLM 生成 — 待实现手动 query 逻辑
+- [x] 错误处理友好，不崩溃 — ✅
+- [x] 默认 provider/model 生效 — ✅ 无需手动指定
+
+---
+
 ### Step R.2: 记忆索引构建
 
 > 目标：memory/*.md → 独立目录 graph.json + cards/，不破坏现有 `memory/` 结构
@@ -1484,4 +1522,4 @@ npx tsx src/briefing/pusher.ts
 
 ---
 
-_最后更新: 2026-03-08（Phase 5.1.1 意图筛选改进完成——新增 filterSearchableNodes() 意图筛选层，改进 query prompt 从工作笔记提取底层技术概念。全量验证：14 节点 → 筛选保留 5 → 15 query，27.7s，LLM 调用 6 次。query 质量从"team collaboration mechanisms"提升到"generative retrieval recommendation"。Step 5.1 验收全部通过。剩余：Gateway 调度集成验证 + 体验验收）_
+_最后更新: 2026-03-14（Step R.1.1 search action 实现完成——新增 `--action search` 支持，CLI 测试通过（query-only 模式，9 条 query，66.2s）。修复 API key 问题（auth-profiles.json 添加 alibaba provider）。添加默认 provider/model（alibaba/glm-5）。部署并重启 Gateway。待测试：dry-run/full 模式、direction 过滤、手动 query 逻辑。）_

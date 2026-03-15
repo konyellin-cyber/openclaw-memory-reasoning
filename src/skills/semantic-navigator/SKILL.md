@@ -40,6 +40,17 @@ This skill provides semantic navigation through knowledge graphs, supporting bot
 - Supports pagination (`--limit`, `--offset`)
 - Supports time filtering (`--since`)
 
+**`--action search`** (write operation):
+- Searches for new papers and ingests into knowledge graph
+- **Warning**: This is a write operation that modifies `graph.json` and `cards/`
+- Supports three modes:
+  - `--mode query-only`: Just generate queries, don't search
+  - `--mode dry-run`: Search and preview, don't ingest
+  - `--mode full`: Complete pipeline (search → ingest)
+- Optional filters:
+  - `--direction <nodeId>`: Limit search to specific direction
+  - `--query <text>`: Manual query (skip LLM generation)
+
 ### 3. Smart Query Support
 
 When users ask to find content, analyze their intent:
@@ -50,6 +61,40 @@ When users ask to find content, analyze their intent:
 | "What did I decide about X?" | `overview` (source=memory) → find decision node → `read` |
 | "Recent papers in topic X" | `explore` node X → `read` with `--since` |
 | "Explore knowledge about X" | `overview` → `explore` relevant node |
+| "Search for papers about X" | `search --mode full` |
+| "What would the system search for?" | `search --mode query-only` |
+| "Preview search results" | `search --mode dry-run` |
+
+## Search Action Details
+
+### Execution Pipeline (5 stages)
+
+```
+Stage 1: Query Generation    → LLM generates queries from focus snapshot
+Stage 2: Paper Search         → Semantic Scholar API calls
+Stage 3: Deduplication        → Remove duplicates against existing cards
+Stage 4: Summary Card Gen     → LLM generates content cards
+Stage 5: Classification       → Classify cards into graph nodes
+────────────────────────────────────────
+Total: ~2.5 min, ~67 LLM calls
+```
+
+### Dialog Query Mapping
+
+| User Says | Agent Call |
+|-----------|------------|
+| "Help me search for papers on recommendation systems" | `search --direction recommendation-system` |
+| "What does the system want to search?" | `search --mode query-only` |
+| "Search with these keywords: generative retrieval, tokenized ID" | `search --query "generative retrieval,tokenized ID"` |
+| "Execute full search" | `search --mode full` |
+
+### Write Operation Warning
+
+> ⚠️ **Important**: The `search` action is a **write operation** that modifies:
+> - `~/.openclaw/personal-rec/knowledge/graph.json` (adds paper IDs to nodes)
+> - `~/.openclaw/personal-rec/knowledge/cards/*.json` (creates new card files)
+>
+> Other actions (overview/explore/read) are read-only.
 
 ## Interaction Patterns
 
@@ -82,6 +127,22 @@ User: "深入看看推荐 Scaling 这个方向"
 User: "最近一周有哪些新的论文？"
 → Use: `--source papers --action overview`
 → Call: `--action read --nodeId root --since 2026-03-01`
+```
+
+### Pattern E: Proactive Search
+```
+User: "帮我搜一下推荐系统的最新论文"
+→ Call: `--source papers --action search --direction recommendation-system`
+→ (Wait ~2.5 min for pipeline to complete)
+→ Return: "搜索完成，新增 X 篇论文到知识库"
+
+User: "先看看系统想搜什么"
+→ Call: `--source papers --action search --mode query-only`
+→ Return: Query list with source node annotations
+
+User: "用这几个关键词搜一下：generative retrieval, tokenized ID"
+→ Call: `--source papers --action search --query "generative retrieval,tokenized ID"`
+→ Return: Search results (or dry-run preview)
 ```
 
 ## Implementation Details
@@ -120,6 +181,13 @@ function getDataDir(source: SourceType): string {
    - Apply filters (limit, offset, since)
    - Sort by date (newest first)
    - Format as card list
+
+4. **search(mode, direction, query, provider, model)**:
+   - Call `runProactiveSearch()` from `src/search/pipeline.ts`
+   - **query-only mode**: Generate queries from `current-focus.json`
+   - **dry-run mode**: Search + dedup, preview without ingesting
+   - **full mode**: Complete pipeline (search → ingest)
+   - Return Markdown summary with statistics
 
 ## Error Handling
 

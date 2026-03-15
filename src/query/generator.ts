@@ -431,56 +431,5 @@ export function deduplicateQueries(queries: GeneratedQuery[]): GeneratedQuery[] 
 }
 
 // ─── CLI ───
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const { parseArgs } = await import("node:util");
-
-  const { values } = parseArgs({
-    options: {
-      "output-only": { type: "boolean" },
-      "dry-run": { type: "boolean" },
-      "skip-filter": { type: "boolean" },
-      limit: { type: "string" },
-      provider: { type: "string" },
-      model: { type: "string" },
-      verbose: { type: "boolean", short: "v" },
-    },
-  });
-
-  const limit = values.limit ? parseInt(values.limit, 10) : undefined;
-
-  console.log(`\n🔍 检索 Query 生成器\n`);
-
-  try {
-    const result = await generateQueries({
-      limit,
-      skipFilter: values["skip-filter"],
-      provider: values.provider,
-      model: values.model,
-    });
-
-    console.log(`📊 统计:`);
-    console.log(`   总活跃节点: ${result.totalNodes}`);
-    console.log(`   适合学术检索: ${result.searchableNodes}`);
-    console.log(`   处理节点: ${result.processedNodes}`);
-    console.log(`   去重前 query: ${result.queriesBeforeDedup}`);
-    console.log(`   去重后 query: ${result.queries.length}\n`);
-
-    if (result.filteredOutNodes.length > 0) {
-      console.log(`🚫 不适合学术检索的方向:`);
-      for (const f of result.filteredOutNodes) {
-        console.log(`   [${f.nodeId}] ${f.reason}`);
-      }
-      console.log();
-    }
-
-    console.log(`📋 Query 列表:`);
-    for (const q of result.queries) {
-      console.log(`   "${q.text}" ← [${q.sourceNodeId}] ${q.sourceDescription}`);
-    }
-    console.log();
-  } catch (err) {
-    console.error(`❌ Error: ${(err as Error).message}`);
-    process.exit(1);
-  }
-}
+// 注意：不使用顶层 await，因为 jiti 同步加载不支持
+// CLI 入口已迁移到 src/query/generator-cli.ts

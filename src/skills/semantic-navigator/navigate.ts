@@ -10,6 +10,9 @@ import { homedir } from "node:os";
  *   npx tsx navigate.ts --source papers --action overview
  *   npx tsx navigate.ts --source papers --action explore --nodeId <id>
  *   npx tsx navigate.ts --source papers --action read --nodeId <id> --limit 20 --since 2026-03-01
+ *   npx tsx navigate.ts --source papers --action search --mode query-only
+ *   npx tsx navigate.ts --source papers --action search --mode dry-run
+ *   npx tsx navigate.ts --source papers --action search --direction recommendation-system
  */
 
 import { Command } from "commander";
@@ -25,9 +28,11 @@ import {
   type SemanticGraph,
 } from "../../knowledge/graph.js";
 import { join } from "node:path";
+import { runProactiveSearch, type PipelineOpts, type PipelineResult } from "../../search/pipeline.js";
 
 type SourceType = "papers" | "memory";
-type ActionType = "overview" | "explore" | "read";
+type ActionType = "overview" | "explore" | "read" | "search";
+type SearchMode = "query-only" | "dry-run" | "full";
 
 interface ReadOptions {
   limit?: number;
@@ -46,11 +51,17 @@ program
 
 program
   .requiredOption("--source <papers|memory>", "Data source to navigate")
-  .requiredOption("--action <overview|explore|read>", "Navigation action")
+  .requiredOption("--action <overview|explore|read|search>", "Navigation action")
   .option("--nodeId <id>", "Node ID to explore or read (required for explore/read)")
   .option("--limit <number>", "Max items to return for read action", "20")
   .option("--offset <number>", "Pagination offset for read action", "0")
   .option("--since <date>", "ISO date string (YYYY-MM-DD) for time filtering")
+  // search action options
+  .option("--mode <query-only|dry-run|full>", "Search mode: query-only (just generate queries), dry-run (search but don't ingest), full (complete pipeline)", "full")
+  .option("--direction <nodeId>", "Search only this direction (internal memory node)")
+  .option("--query <text>", "Manual query text (skip LLM generation), comma-separated for multiple")
+  .option("--provider <name>", "LLM provider for search action", process.env.PERSONAL_REC_PROVIDER ?? "alibaba")
+  .option("--model <name>", "LLM model for search action", process.env.PERSONAL_REC_MODEL ?? "glm-5")
   .action(async (options) => {
     try {
       const source = options.source as SourceType;
@@ -61,13 +72,19 @@ program
         process.exit(1);
       }
 
-      if (!["overview", "explore", "read"].includes(action)) {
-        console.error(`Error: Invalid action "${action}". Must be "overview", "explore", or "read".`);
+      if (!["overview", "explore", "read", "search"].includes(action)) {
+        console.error(`Error: Invalid action "${action}". Must be "overview", "explore", "read", or "search".`);
         process.exit(1);
       }
 
       if ((action === "explore" || action === "read") && !options.nodeId) {
         console.error(`Error: nodeId is required for "${action}" action.`);
+        process.exit(1);
+      }
+
+      // search action only works with papers source
+      if (action === "search" && source !== "papers") {
+        console.error(`Error: search action only supports --source papers (not memory).`);
         process.exit(1);
       }
 
@@ -95,6 +112,15 @@ program
               since: options.since,
             },
           );
+          break;
+        case "search":
+          result = await handleSearch({
+            mode: options.mode as SearchMode,
+            direction: options.direction,
+            query: options.query,
+            provider: options.provider,
+            model: options.model,
+          });
           break;
         default:
           throw new Error(`Unknown action: ${action}`);
@@ -290,6 +316,107 @@ async function handleRead(
   if (hasMore) {
     lines.push(``);
     lines.push(`💡 More items available. Use --offset=${offset + limit} to see next page.`);
+  }
+
+  return lines.join("\n");
+}
+
+// ─── Search Action Handler ───
+
+interface SearchOptions {
+  mode?: SearchMode;
+  direction?: string;
+  query?: string;
+  provider?: string;
+  model?: string;
+}
+
+async function handleSearch(opts: SearchOptions): Promise<string> {
+  const mode = opts.mode ?? "full";
+
+  const pipelineOpts: PipelineOpts = {
+    queryOnly: mode === "query-only",
+    dryRun: mode === "dry-run",
+    provider: opts.provider,
+    model: opts.model,
+  };
+
+  // 如果指定了 direction，限制只搜该方向
+  if (opts.direction) {
+    // TODO: 实现方向过滤逻辑
+    // 当前 pipeline 不支持按 direction 过滤，需要扩展
+    // 暂时忽略 direction，记录警告
+    console.warn(`Warning: --direction filtering not yet implemented. Searching all directions.`);
+  }
+
+  // 如果指定了手动 query，跳过 LLM 生成
+  if (opts.query) {
+    // TODO: 实现手动 query 逻辑
+    // 当前 pipeline 依赖 current-focus.json 自动生成 query
+    // 需要扩展 pipeline 支持手动 query 输入
+    console.warn(`Warning: --query manual input not yet implemented. Using auto-generated queries.`);
+  }
+
+  const result = await runProactiveSearch(pipelineOpts);
+
+  return formatSearchResult(result, mode);
+}
+
+function formatSearchResult(result: PipelineResult, mode: SearchMode): string {
+  const lines: string[] = [
+    `## Search Result`,
+    `Mode: ${mode}`,
+    `Duration: ${(result.totalDurationMs / 1000).toFixed(1)}s`,
+    ``,
+  ];
+
+  // Query 生成结果
+  lines.push(`### Queries Generated (${result.queryResult.queries.length})`);
+  if (result.queryResult.queries.length > 0) {
+    for (const q of result.queryResult.queries.slice(0, 10)) {
+      lines.push(`  - "${q.text}" ← [${q.sourceNodeId}]`);
+    }
+    if (result.queryResult.queries.length > 10) {
+      lines.push(`  - ... and ${result.queryResult.queries.length - 10} more`);
+    }
+  } else {
+    lines.push(`  No queries generated.`);
+  }
+  lines.push(``);
+
+  // 搜索统计
+  if (mode !== "query-only") {
+    lines.push(`### Search Statistics`);
+    lines.push(`  Queries executed: ${result.searchStats.totalQueries}`);
+    lines.push(`  Papers found: ${result.searchStats.totalPapersFound}`);
+    lines.push(`  Queries with results: ${result.searchStats.queriesWithResults}`);
+    lines.push(`  Empty queries: ${result.searchStats.queriesEmpty}`);
+    lines.push(``);
+
+    // 去重统计
+    lines.push(`### Deduplication`);
+    lines.push(`  New papers: ${result.dedupStats.newCount}`);
+    lines.push(`  Batch duplicates: ${result.dedupStats.batchDuplicates}`);
+    lines.push(`  Existing duplicates: ${result.dedupStats.existingDuplicates}`);
+    lines.push(``);
+
+    // 入库统计
+    if (result.ingestStats) {
+      lines.push(`### Ingestion`);
+      lines.push(`  Cards generated: ${result.ingestStats.cardsGenerated}`);
+      lines.push(`  Cards skipped: ${result.ingestStats.cardsSkipped}`);
+      lines.push(`  Cards classified: ${result.ingestStats.classified}`);
+      lines.push(``);
+      lines.push(`✅ Search complete. New papers are now in the knowledge graph.`);
+    } else {
+      if (mode === "dry-run") {
+        lines.push(`💡 Dry run — no papers were ingested. Use --mode full to ingest.`);
+      } else {
+        lines.push(`💡 No new papers to ingest (all were duplicates).`);
+      }
+    }
+  } else {
+    lines.push(`💡 Query-only mode — no search executed. Use --mode dry-run or --mode full to search.`);
   }
 
   return lines.join("\n");

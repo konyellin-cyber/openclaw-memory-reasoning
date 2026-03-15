@@ -9,7 +9,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "migrate": "npx tsx src/migration/migrate-cli.ts",
-    "deploy": "npm run build && mkdir -p ~/.openclaw/extensions/personal-rec/dist && rsync -av --delete dist/ ~/.openclaw/extensions/personal-rec/dist/ && cp package.json openclaw.plugin.json ~/.openclaw/extensions/personal-rec/ && cd ~/.openclaw/extensions/personal-rec && npm install --omit=dev --ignore-scripts",
+    "deploy": "npm run build && mkdir -p ~/.openclaw/extensions/personal-rec/dist && rsync -av --delete dist/ ~/.openclaw/extensions/personal-rec/dist/ && cp package.json openclaw.plugin.json ~/.openclaw/extensions/personal-rec/ && mkdir -p ~/.openclaw/workspace/skills/semantic-navigator && cp src/skills/semantic-navigator/SKILL.md ~/.openclaw/workspace/skills/semantic-navigator/ && cd ~/.openclaw/extensions/personal-rec && npm install --omit=dev --ignore-scripts",
     "deploy:skill": "npm run build && rsync -av dist/skills/paper-updater/ ~/.openclaw/workspace/skills/paper-updater/scripts/ && cp src/skills/paper-updater/SKILL.md ~/.openclaw/workspace/skills/paper-updater/",
     "restart": "npm run deploy && openclaw gateway restart"
   },

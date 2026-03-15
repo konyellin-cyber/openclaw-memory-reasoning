@@ -434,36 +434,5 @@ function extractTopLevelJson(text: string): string {
 }
 
 // ─── CLI ───
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const { readFileSync } = await import("node:fs");
-
-  const { values } = parseArgs({
-    options: {
-      "index-dir": { type: "string" },
-      "node-id": { type: "string", short: "n" },
-      "dry-run": { type: "boolean" },
-      provider: { type: "string", short: "p" },
-      model: { type: "string", short: "m" },
-      "batch-size": { type: "string" },
-    },
-  });
-
-  const configPath = join(homedir(), ".openclaw", "openclaw.json");
-  let config: Record<string, unknown> | undefined;
-  try {
-    config = JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch {}
-
-  const result = await reorganizeMemory({
-    indexDir: values["index-dir"],
-    nodeId: values["node-id"],
-    dryRun: values["dry-run"] ?? false,
-    provider: values.provider ?? process.env.PERSONAL_REC_PROVIDER ?? "alibaba",
-    model: values.model ?? process.env.PERSONAL_REC_MODEL ?? "qwen3-coder-plus",
-    config,
-    batchSize: values["batch-size"] ? parseInt(values["batch-size"], 10) : undefined,
-  });
-
-  console.log(`\n📊 重整结果: ${JSON.stringify(result, null, 2)}`);
-}
+// 注意：不使用顶层 await，因为 jiti 同步加载不支持
+// CLI 入口已迁移到单独的 CLI 文件

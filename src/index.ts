@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createFeedService } from "./feeds/service.js";
 import { setStateDir } from "./tools/search-feed.js";
 import { loadRunEmbeddedPiAgent } from "./llm/loader.js";
@@ -58,7 +59,6 @@ const plugin = {
     // 读取 openclaw 全局 config（用于 custom provider apiKey 解析）
     let openclawConfig: Record<string, unknown> | undefined;
     try {
-      const { readFileSync } = require("node:fs");
       const configPath = `${process.env.HOME}/.openclaw/openclaw.json`;
       openclawConfig = JSON.parse(readFileSync(configPath, "utf-8"));
     } catch {

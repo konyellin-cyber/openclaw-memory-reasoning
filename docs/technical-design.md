@@ -700,13 +700,66 @@ navigate.ts --source papers|memory --action overview|explore|read
 | `papers` | `~/.openclaw/personal-rec/knowledge/graph.json` | `~/.openclaw/personal-rec/knowledge/cards/` |
 | `memory` | `~/.openclaw/memory-index/knowledge/graph.json` | `~/.openclaw/memory-index/knowledge/cards/` |
 
-#### 三种 Action 的行为
+#### 四种 Action 的行为
 
 | Action | 输入 | 输出 | 典型场景 |
 |--------|------|------|---------|
 | `overview` | source | 顶层节点列表 + 统计（items 总数、活跃节点数） | "帮我看看有什么方向" |
 | `explore` | source + nodeId | 指定节点的邻居、边关系、子节点列表 | "深入看看推荐系统" |
 | `read` | source + nodeId + limit/offset/since | 节点下的 ContentCard 列表（Markdown 格式） | "最近一周有什么新论文" |
+| `search` | source + mode + direction/query | 搜索新论文并入库 | "帮我搜一下推荐系统的最新论文" |
+
+#### search Action 设计（写操作）
+
+> search 是导航 Skill 中唯一的"写"操作，会改变 `graph.json` 和 `cards/`。其他三种 action（overview/explore/read）都是"读"操作。
+
+**核心设计**：复用 Phase 5 的主动搜索管道（`src/search/pipeline.ts`），封装为 Skill action。
+
+**参数设计**：
+
+```
+search
+  [--mode query-only|dry-run|full]    # 控制执行深度
+  [--direction <nodeId>]              # 限定搜索方向（可选）
+  [--query <text>]                    # 手动指定 query（可选，跳过生成）
+```
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--mode query-only` | 只生成 query，不搜索 | — |
+| `--mode dry-run` | 搜索 + 去重，预览不入库 | — |
+| `--mode full` | 完整管道：搜索 + 摘要卡生成 + 入库 | `full` |
+| `--direction` | 只搜指定方向（对应 internal memory 的某个节点） | 自动从 `current-focus.json` 生成 |
+| `--query` | 手动指定 query，跳过 LLM 生成 | 自动生成 |
+
+**执行流程**（`--mode full`）：
+
+```
+Stage 1: 生成 Query        → loadFocusSnapshot + filterSearchableNodes + generateQueries
+Stage 2: 搜索论文          → searchPapers (Semantic Scholar API)
+Stage 3: 去重             → deduplicateResults
+Stage 4: 摘要卡生成     → generateSummaryCards
+Stage 5: 归类入库       → classifyCards
+────────────────────────────────────────
+总计约 2.5 分钟，~67 次 LLM 调用
+```
+
+**对话场景映射**：
+
+| 用户说 | Agent 调用 |
+|--------|-----------|
+| "帮我搜一下推荐系统的最新论文" | `search --direction recommendation-system` |
+| "先看看系统想搜什么" | `search --mode query-only` |
+| "用这几个关键词搜一下：generative retrieval, tokenized ID" | `search --query "generative retrieval,tokenized ID"` |
+| "执行完整搜索" | `search --mode full` |
+
+**与 Plugin 后台调度的关系**：
+
+| 触发方式 | 说明 | 状态 |
+|---------|------|------|
+| **postFetchPipeline 末尾** | RSS 拉取后自动触发 | ✅ 已实现（Phase 5.4） |
+| **CLI 手动** | `npx tsx src/search/search-cli.ts` | ✅ 已实现 |
+| **Skill 触发** | 对话中 Agent 调用 search action | 🆕 待实现 |
 
 #### Agent 集成（AGENTS.md 配置）
 

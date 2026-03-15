@@ -147,50 +147,5 @@ export async function exportFocusSnapshot(options: SnapshotOptions = {}): Promis
 }
 
 // ─── CLI ───
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const { parseArgs } = await import("node:util");
-
-  const { values } = parseArgs({
-    options: {
-      "index-dir": { type: "string" },
-      "min-items": { type: "string" },
-      "recent-days": { type: "string" },
-      verbose: { type: "boolean", short: "v" },
-    },
-  });
-
-  const snapshot = await exportFocusSnapshot({
-    indexDir: values["index-dir"],
-    minItems: values["min-items"] ? parseInt(values["min-items"], 10) : undefined,
-    recentDays: values["recent-days"] ? parseInt(values["recent-days"], 10) : undefined,
-  });
-
-  console.log(`\n📊 关注方向快照`);
-  console.log(`   总节点: ${snapshot.totalNodes}`);
-  console.log(`   总卡片: ${snapshot.totalItems}`);
-  console.log(`   活跃方向: ${snapshot.activeNodes.length}`);
-  console.log(`   非活跃方向: ${snapshot.inactiveNodes.length}\n`);
-
-  console.log(`🔥 活跃方向:`);
-  for (const node of snapshot.activeNodes) {
-    console.log(`   [${node.id}] ${node.description}`);
-    console.log(`     卡片: ${node.itemCount} (最近: ${node.recentItemCount})`);
-    console.log(`     最新: ${node.latestDate}`);
-    if (node.topPeople.length > 0) {
-      console.log(`     人物: ${node.topPeople.join(", ")}`);
-    }
-    console.log(`     样本: ${node.sampleTitles.slice(0, 3).join(" | ")}`);
-    console.log();
-  }
-
-  if (snapshot.inactiveNodes.length > 0 && values.verbose) {
-    console.log(`💤 非活跃方向:`);
-    for (const node of snapshot.inactiveNodes) {
-      console.log(`   [${node.id}] ${node.description} (${node.itemCount} 张) — ${node.reason}`);
-    }
-    console.log();
-  }
-
-  console.log(`💾 快照已保存到: ${snapshot.memoryIndexDir}/snapshot/current-focus.json`);
-}
+// 注意：不使用顶层 await，因为 jiti 同步加载不支持
+// CLI 入口已迁移到单独的 CLI 文件
